@@ -9,7 +9,6 @@ where
     V: QueryValue + Clone + Copy,
 {
     value_range: [V; 2],
-    keys_in_range: Vec<K>,
     first_child: BTreeNode<K, V, C>,
     children: [Option<(V, BTreeNode<K, V, C>)>; C],
 }
@@ -67,9 +66,6 @@ where
         let [range_min, range_max] = node.value_range;
         match query {
             Query::Gt { value } => {
-                if *value <= range_min {
-                    return node.keys_in_range.clone();
-                };
                 if *value > range_max {
                     return vec![];
                 };
@@ -78,17 +74,11 @@ where
                 if *value < range_min {
                     return vec![];
                 };
-                if *value >= range_max {
-                    return node.keys_in_range.clone();
-                };
             }
             Query::Bt {
                 value_low,
                 value_high,
             } => {
-                if *value_low <= range_min && *value_high >= range_max {
-                    return node.keys_in_range.clone();
-                }
                 if *value_high < range_min {
                     return vec![];
                 }
@@ -265,25 +255,9 @@ where
             BTreeNode::InnerNode(ref inner) => inner.node.value_range[1],
             BTreeNode::LeafNode(ref leaf) => leaf.node.value,
         });
-        let keys_in_range: Vec<K> = children.iter().fold(
-            match first_child {
-                BTreeNode::LeafNode(ref leaf) => leaf.node.keys.clone(),
-                BTreeNode::InnerNode(ref inner) => inner.node.keys_in_range.clone(),
-            },
-            |mut acc, child| {
-                match child {
-                    BTreeNode::LeafNode(ref leaf) => acc.append(&mut leaf.node.keys.clone()),
-                    BTreeNode::InnerNode(ref inner) => {
-                        acc.append(&mut inner.node.keys_in_range.clone())
-                    }
-                };
-                acc
-            },
-        );
 
         BTreeNode::InnerNode(InnerNode {
             node: Arc::new(InnerNodeData {
-                keys_in_range,
                 children: std::array::from_fn(|i| {
                     children
                         .get(i)
@@ -409,8 +383,7 @@ mod tests {
         Standard: Distribution<V>,
     {
         let query_count = 1000;
-        for i in 0..query_count {
-            println!("Query #{i}");
+        for _ in 0..query_count {
             let query = get_random_query();
             let mut expected_results: Vec<_> = match query {
                 Query::Gt { value } => items.iter().filter(|(_, v)| *v >= value).collect(),
@@ -487,33 +460,6 @@ mod tests {
             }
             BTreeNode::InnerNode(inner) => {
                 assert!(inner.node.value_range[0] <= inner.node.value_range[1]);
-
-                inner.node.keys_in_range.iter().for_each(|k| {
-                    let item = items.iter().find(|(k1, _)| k1 == k);
-                    if let Some((_, v1)) = item {
-                        assert!(
-                            inner.node.value_range[0] <= *v1 && inner.node.value_range[1] >= *v1
-                        );
-                    } else {
-                        assert!(false);
-                    }
-                });
-
-                let mut expected_keys: Vec<_> = items
-                    .iter()
-                    .filter_map(|(k, v)| {
-                        if *v >= inner.node.value_range[0] && *v <= inner.node.value_range[1] {
-                            Some(*k)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                let mut actual_keys = inner.node.keys_in_range.clone();
-
-                expected_keys.sort();
-                actual_keys.sort();
-                assert_eq!(expected_keys, actual_keys);
 
                 match &inner.node.first_child {
                     BTreeNode::LeafNode(leaf_child) => {
@@ -601,6 +547,7 @@ mod tests {
             }
             let kv_pair = kv_pairs.last_mut().unwrap();
             for _ in 0..pairs_per_iteration {
+                //    println!("inserting {it2} at {:?}", time.elapsed());
                 let (k, v) = loop {
                     let (k, v): (K, V) = rng.gen();
                     if !kv_pair.iter().any(|(k1, _)| *k1 == k) {
