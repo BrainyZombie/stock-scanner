@@ -15,12 +15,13 @@ where
     fn query(&self, query: &Query<V>) -> Vec<K>;
 }
 
-pub trait DataContainer<K, V>
+pub trait DataContainer<K, V, R>
 where
     K: QueryKey,
     V: QueryValue,
+    R: QueryContainer<K, V>,
 {
     fn insert(&mut self, key: K, value: V);
-    fn get_queryable(&mut self) -> Box<dyn QueryContainer<K, V>>;
+    fn get_queryable(&mut self) -> R;
     //    fn delete(&mut self, key: K);
 }

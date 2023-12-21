@@ -52,7 +52,7 @@ where
     K: QueryKey + Clone + Copy + Hash,
     V: QueryValue + Clone + Copy,
 {
-    root_node: Option<BTreeNode<K, V, C>>,
+    root_node: BTreeNode<K, V, C>,
     node_lookup: HashMap<K, V>,
 }
 
@@ -292,44 +292,41 @@ where
     K: QueryKey + Clone + Copy + Hash,
     V: QueryValue + Clone + Copy,
 {
-    pub fn new() -> BTree<K, V, C> {
+    pub fn new(init: (K, V)) -> BTree<K, V, C> {
         BTree {
-            root_node: None,
+            root_node: BTreeNode::new_leaf_node(vec![init.0], init.1),
             node_lookup: HashMap::new(),
         }
     }
 }
 
-impl<K, V, const C: usize> DataContainer<K, V> for BTree<K, V, C>
+impl<K, V, const C: usize> DataContainer<K, V, BTreeNode<K, V, C>> for BTree<K, V, C>
 where
     K: QueryKey + Clone + Copy + Hash,
     V: QueryValue + Clone + Copy,
 {
     fn insert(&mut self, key: K, value: V) {
-        if let Some(ref root) = self.root_node {
-            let new_nodes = {
-                if let Some(_) = self.node_lookup.get(&key) {
-                    panic!("test");
-                    root.insert(key, value)
-                } else {
-                    self.node_lookup.insert(key, value);
-                    root.insert(key, value)
-                }
-            };
+        let root = self.root_node.clone();
 
-            if let (node1, Some(node2)) = new_nodes {
-                let new_root = BTreeNode::new_inner_node(node1, vec![node2]);
-                self.root_node = Some(new_root.into());
-            } else if let (node1, None) = new_nodes {
-                self.root_node = Some(node1.into());
+        let new_nodes = {
+            if let Some(_) = self.node_lookup.get(&key) {
+                panic!("test");
+                root.insert(key, value)
+            } else {
+                self.node_lookup.insert(key, value);
+                root.insert(key, value)
             }
-        } else {
-            let leaf = BTreeNode::new_leaf_node(vec![key], value);
-            self.root_node = Some(BTreeNode::new_inner_node(leaf, vec![]).into());
+        };
+
+        if let (node1, Some(node2)) = new_nodes {
+            let new_root = BTreeNode::new_inner_node(node1, vec![node2]);
+            self.root_node = new_root;
+        } else if let (node1, None) = new_nodes {
+            self.root_node = node1;
         }
     }
-    fn get_queryable(&mut self) -> Box<dyn QueryContainer<K, V>> {
-        Box::new(self.root_node.as_ref().unwrap().clone())
+    fn get_queryable(&mut self) -> BTreeNode<K, V, C> {
+        self.root_node.clone()
     }
 }
 
@@ -383,7 +380,8 @@ mod tests {
         Standard: Distribution<V>,
     {
         let query_count = 1000;
-        for _ in 0..query_count {
+        for i in 0..query_count {
+            println!("Query #{i}");
             let query = get_random_query();
             let mut expected_results: Vec<_> = match query {
                 Query::Gt { value } => items.iter().filter(|(_, v)| *v >= value).collect(),
@@ -529,15 +527,17 @@ mod tests {
         Standard: Distribution<V>,
     {
         let time = Instant::now();
-        let mut container = BTree::<K, V, C>::new();
+        let mut rng = rand::thread_rng();
+        let init: (K, V) = (rng.gen(), rng.gen());
+        let mut container: BTree<K, V, C> = BTree::new(init);
 
         let iterations: usize = 10;
         let pairs_per_iteration: usize = 100;
 
-        let mut rng = rand::thread_rng();
-        let mut kv_pairs: Vec<Vec<(K, V)>> = vec![];
-        let mut queryables: Vec<Box<dyn QueryContainer<K, V>>> = vec![];
-        let mut tree_roots: Vec<BTreeNode<K, V, C>> = vec![];
+        let mut kv_pairs: Vec<Vec<(K, V)>> = vec![vec![init]];
+        let mut queryables: Vec<Box<dyn QueryContainer<K, V>>> =
+            vec![Box::new(container.get_queryable())];
+        let mut tree_roots: Vec<BTreeNode<K, V, C>> = vec![container.get_queryable()];
         for it in 0..iterations {
             println!("starting {it} at {:?}", time.elapsed());
             if let Some(last_pairs) = kv_pairs.last() {
@@ -547,7 +547,6 @@ mod tests {
             }
             let kv_pair = kv_pairs.last_mut().unwrap();
             for _ in 0..pairs_per_iteration {
-                //    println!("inserting {it2} at {:?}", time.elapsed());
                 let (k, v) = loop {
                     let (k, v): (K, V) = rng.gen();
                     if !kv_pair.iter().any(|(k1, _)| *k1 == k) {
@@ -557,8 +556,8 @@ mod tests {
                 kv_pair.push((k, v));
                 container.insert(k, v);
             }
-            queryables.push(container.get_queryable());
-            tree_roots.push(container.root_node.clone().unwrap());
+            queryables.push(Box::new(container.get_queryable()));
+            tree_roots.push(container.get_queryable());
 
             verify_queryable(queryables.last().unwrap(), kv_pairs.last().unwrap());
             verify_tree(tree_roots.last().unwrap(), kv_pairs.last().unwrap());
@@ -581,11 +580,11 @@ mod tests {
         Standard: Distribution<V>,
     {
         let time = Instant::now();
-        let mut container = BTree::<K, V, C>::new();
+        let mut rng = rand::thread_rng();
+        let mut container = BTree::<K, V, C>::new((rng.gen(), rng.gen()));
 
         let pair_count: usize = 100_000;
 
-        let mut rng = rand::thread_rng();
         let mut kv_pair: Vec<(K, V)> = vec![];
         for it in 0..pair_count {
             if it % 10000 == 0 {
@@ -614,17 +613,17 @@ mod tests {
 
         println!(
             "Tree depth {}",
-            verify_tree_leaf_depth(&container.root_node.unwrap())
+            verify_tree_leaf_depth(&container.root_node)
         );
     }
 
     #[test]
     fn random_inserts_test() {
-        random_inserts::<u32, u32, 9>();
+        random_inserts::<u32, u32, 30>();
     }
 
     #[test]
     fn queries_test() {
-        query_benchmark::<u32, u32, 15>();
+        query_benchmark::<u32, u32, 30>();
     }
 }
