@@ -624,6 +624,6 @@ mod tests {
 
     #[test]
     fn queries_test() {
-        query_benchmark::<u32, u32, 30>();
+        query_benchmark::<u32, u32, 15>();
     }
 }

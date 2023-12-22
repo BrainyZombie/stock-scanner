@@ -89,10 +89,7 @@ where
                 if *value_low <= range_min && *value_high >= range_max {
                     return node.keys_in_range.clone();
                 }
-                if *value_high < range_min {
-                    return vec![];
-                }
-                if *value_low > range_max {
+                if *value_high < range_min || *value_low > range_max {
                     return vec![];
                 }
             }
@@ -112,8 +109,7 @@ where
             });
     }
     fn insert(&self, key: K, value: V) -> (BTreeNode<K, V, C>, Option<BTreeNode<K, V, C>>) {
-        let mut child_nodes: Vec<_> = vec![self.node.first_child.clone()]
-            .into_iter()
+        let mut child_nodes: Vec<_> = std::iter::once(self.node.first_child.clone())
             .chain(self.node.children.iter().cloned().map_while(|child| {
                 if let Some((_, child)) = child {
                     Some(child)
@@ -123,6 +119,10 @@ where
             }))
             .collect();
 
+        // will be forwarded to the child in the prev index as the one we calculate here
+        // since we index into the child_nodes array later which has first_child prepended
+        // Hence getting idx 2 here means we actually forward to idx 1
+        // getting idx 0 means we forward to first_child
         let idx_to_forward = self
             .node
             .children
@@ -130,7 +130,7 @@ where
             .enumerate()
             .find(|(_, child)| {
                 if let Some((child_value, _)) = child {
-                    if value <= *child_value {
+                    if value < *child_value {
                         return true;
                     };
                 };
